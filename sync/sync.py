@@ -60,6 +60,24 @@ def _fetch_full_history(client: object, lunchflow_id: int, today: date) -> list[
     return collected
 
 
+def _fetch_incremental(
+    client: object, lunchflow_id: int, since: date, today: date
+) -> list[Transaction]:
+    """Incremental walk: one inclusive [from, to] calendar-month window from
+    `since` to `today` (each capped at `today`). Returns every transaction found."""
+    collected: list[Transaction] = []
+    window_start = since
+    while window_start <= today:
+        window_end = min(_last_day_of_month(window_start.year, window_start.month), today)
+        collected.extend(
+            client.get_transactions(  # type: ignore[attr-defined]
+                lunchflow_id, date_from=window_start, date_to=window_end
+            )
+        )
+        window_start = window_end + timedelta(days=1)
+    return collected
+
+
 def sync_account(conn: sqlite3.Connection, client: object, account: Account) -> dict:
     """
     Sync transactions for a single account. Returns a summary dict.
