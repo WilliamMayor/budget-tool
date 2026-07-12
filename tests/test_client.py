@@ -133,3 +133,39 @@ def test_get_balance_returns_decimal():
     })
     balance = client.get_balance(1)
     assert balance == Decimal("1234.56")
+
+
+def test_get_transactions_sends_date_range_params():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"transactions": [], "total": 0})
+
+    transport = httpx.MockTransport(handler)
+    client = LunchflowClient.__new__(LunchflowClient)
+    client._client = httpx.Client(transport=transport, base_url="https://lunchflow.app/api/v1")
+
+    client.get_transactions(1, date_from=date(2025, 6, 1), date_to=date(2025, 6, 30))
+
+    assert captured["params"]["from"] == "2025-06-01"
+    assert captured["params"]["to"] == "2025-06-30"
+    assert captured["params"]["include_pending"] == "true"
+
+
+def test_get_transactions_omits_date_params_when_absent():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"transactions": [], "total": 0})
+
+    transport = httpx.MockTransport(handler)
+    client = LunchflowClient.__new__(LunchflowClient)
+    client._client = httpx.Client(transport=transport, base_url="https://lunchflow.app/api/v1")
+
+    client.get_transactions(1)
+
+    assert "from" not in captured["params"]
+    assert "to" not in captured["params"]
+    assert captured["params"]["include_pending"] == "true"
