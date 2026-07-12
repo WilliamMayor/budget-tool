@@ -150,3 +150,29 @@ def test_all_statuses_round_trip(db_conn, saved_account, status):
     insert_transaction(db_conn, make_transaction(saved_account.id, status=status))
     result = get_transactions_for_account(db_conn, saved_account.id)
     assert result[0].status == status
+
+
+def test_latest_transaction_date_none_when_empty(db_conn):
+    from sync.db import get_latest_transaction_date
+    account = upsert_account(db_conn, Account(lunchflow_id=1, currency="GBP"))
+    assert get_latest_transaction_date(db_conn, account.id) is None
+
+
+def test_latest_transaction_date_returns_max(db_conn):
+    from sync.db import get_latest_transaction_date
+    account = upsert_account(db_conn, Account(lunchflow_id=2, currency="GBP"))
+    insert_transaction(db_conn, make_transaction(account.id, lunchflow_id="a", date=date(2025, 6, 1)))
+    insert_transaction(db_conn, make_transaction(account.id, lunchflow_id="b", date=date(2025, 6, 20)))
+    insert_transaction(db_conn, make_transaction(account.id, lunchflow_id="c", date=date(2025, 6, 10)))
+    assert get_latest_transaction_date(db_conn, account.id) == date(2025, 6, 20)
+
+
+def test_latest_transaction_date_ignores_opening_balance(db_conn):
+    from sync.db import get_latest_transaction_date
+    account = upsert_account(db_conn, Account(lunchflow_id=3, currency="GBP"))
+    insert_transaction(db_conn, make_transaction(account.id, lunchflow_id="a", date=date(2025, 6, 1)))
+    insert_transaction(db_conn, make_transaction(
+        account.id, lunchflow_id=None, date=date(2025, 12, 31),
+        status=TransactionStatus.OPENING_BALANCE,
+    ))
+    assert get_latest_transaction_date(db_conn, account.id) == date(2025, 6, 1)
