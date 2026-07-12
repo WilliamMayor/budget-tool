@@ -14,6 +14,7 @@ import httpx
 
 from .db import (
     get_all_accounts,
+    get_latest_transaction_date,
     has_opening_balance,
     insert_transaction,
     update_account_sync_info,
@@ -78,51 +79,71 @@ def _fetch_incremental(
     return collected
 
 
+def _maybe_insert_opening_balance(
+    conn: sqlite3.Connection,
+    account: Account,
+    api_transactions: list[Transaction],
+    current_balance: Decimal,
+) -> None:
+    """First-sync only: if the fetched history's signed sum doesn't match the
+    balance and no opening balance exists yet, insert a correcting adjustor
+    dated one day before the earliest fetched transaction."""
+    if not api_transactions:
+        return
+
+    expected_balance = sum(
+        (tx.amount if tx.credit_debit_indicator == "CRDT" else -tx.amount)
+        for tx in api_transactions
+    )
+    if expected_balance == current_balance or has_opening_balance(conn, account.id):  # type: ignore[arg-type]
+        return
+
+    earliest_date = min((tx.date for tx in api_transactions if tx.date), default=None)
+    if earliest_date is None:
+        return
+
+    adjustor_signed = current_balance - expected_balance
+    if adjustor_signed < 0:
+        cdi = "DBIT"
+        adj_amount = -adjustor_signed
+    else:
+        cdi = "CRDT"
+        adj_amount = adjustor_signed
+
+    saved_adjustor = insert_transaction(
+        conn,
+        Transaction(
+            account_id=account.id,  # type: ignore[arg-type]
+            amount=adj_amount,
+            currency=account.currency,
+            credit_debit_indicator=cdi,
+            status=TransactionStatus.OPENING_BALANCE,
+            date=earliest_date - timedelta(days=1),
+            merchant="Balance correction",
+            description="Your transaction history only goes back so far. This entry makes the opening balance match your actual account balance — allocate it to cover any spending that happened before your history begins.",
+        ),
+    )
+    assert saved_adjustor.id is not None
+    ensure_default_split(conn, saved_adjustor.id)
+
+
 def sync_account(conn: sqlite3.Connection, client: object, account: Account) -> dict:
     """
     Sync transactions for a single account. Returns a summary dict.
     Raises httpx.HTTPError on API errors — the caller is responsible for handling these.
     """
-    api_transactions: list[Transaction] = client.get_transactions(account.lunchflow_id)  # type: ignore[attr-defined]
-    current_balance: Decimal = client.get_balance(account.lunchflow_id)  # type: ignore[attr-defined]
+    today = datetime.now(timezone.utc).date()
+    since = get_latest_transaction_date(conn, account.id)  # type: ignore[arg-type]
 
-    # Detect missing history: compare signed sum of fetched transactions against current balance.
-    if api_transactions:
-        expected_balance = sum(
-            (tx.amount if tx.credit_debit_indicator == "CRDT" else -tx.amount)
-            for tx in api_transactions
-        )
-        if expected_balance != current_balance and not has_opening_balance(conn, account.id):  # type: ignore[arg-type]
-            earliest_date = min(
-                (tx.date for tx in api_transactions if tx.date),
-                default=None,
-            )
-            if earliest_date is not None:
-                adjustor_signed = current_balance - expected_balance
-                if adjustor_signed < 0:
-                    cdi = "DBIT"
-                    adj_amount = -adjustor_signed
-                else:
-                    cdi = "CRDT"
-                    adj_amount = adjustor_signed
+    if since is None:
+        # First sync: discover the full available history, then reconcile the balance.
+        api_transactions = _fetch_full_history(client, account.lunchflow_id, today)
+        current_balance: Decimal = client.get_balance(account.lunchflow_id)  # type: ignore[attr-defined]
+        _maybe_insert_opening_balance(conn, account, api_transactions, current_balance)
+    else:
+        # Incremental: only what's posted since the last synced day (inclusive).
+        api_transactions = _fetch_incremental(client, account.lunchflow_id, since, today)
 
-                saved_adjustor = insert_transaction(
-                    conn,
-                    Transaction(
-                        account_id=account.id,  # type: ignore[arg-type]
-                        amount=adj_amount,
-                        currency=account.currency,
-                        credit_debit_indicator=cdi,
-                        status=TransactionStatus.OPENING_BALANCE,
-                        date=earliest_date - timedelta(days=1),
-                        merchant="Balance correction",
-                        description="Your transaction history only goes back so far. This entry makes the opening balance match your actual account balance — allocate it to cover any spending that happened before your history begins.",
-                    ),
-                )
-                assert saved_adjustor.id is not None
-                ensure_default_split(conn, saved_adjustor.id)
-
-    # Upsert all transactions, binding to our internal account id.
     for tx in api_transactions:
         tx.account_id = account.id  # type: ignore[assignment]
         saved = upsert_transaction(conn, tx)
