@@ -75,22 +75,21 @@ test.describe('Allocation flow', () => {
 		await expect(dock).toContainText('Tesco Superstore');
 
 		// Navigate to next
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
 		await expect(page).toHaveURL(/tx=1/);
 		await expect(dock).toContainText('Deliveroo');
 
 		// Navigate back
-		await page.getByLabel('Previous transaction').click();
+		await page.getByLabel('Previous item').click();
 		await expect(page).toHaveURL(/tx=0/);
 		await expect(dock).toContainText('Tesco Superstore');
 	});
 
-	test('allocate button shows the amount being allocated', async ({ page }) => {
+	test('allocate pill shows the amount being allocated', async ({ page }) => {
 		const url = await getAccountUrl(page);
 		await page.goto(url);
-		// tx1 is Tesco £18.50 DBIT — button should read "Allocate £18.50"
+		// tx1 is Tesco £18.50 DBIT — the collapsed row pill reads "+ £18.50"
 		const btn = page.getByTestId('allocate-btn').first();
-		await expect(btn).toContainText('Allocate');
 		await expect(btn).toContainText('18.50');
 	});
 
@@ -113,7 +112,7 @@ test.describe('Allocation flow', () => {
 		const url = await getAccountUrl(page);
 		await page.goto(url);
 
-		await page.getByTestId('expander-btn').click();
+		await page.getByRole('button', { name: '+ New envelope' }).click();
 		await page.getByLabel('Envelope name').fill('Rent');
 		await page.getByRole('button', { name: 'Create' }).click();
 

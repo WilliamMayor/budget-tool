@@ -1,37 +1,38 @@
 {
-  "name": "budget-tool-web",
-  "version": "0.0.1",
-  "private": true,
-  "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "test:all": "vitest run && playwright test"
-  },
-  "dependencies": {
-    "@fontsource-variable/space-grotesk": "^5.2.10",
-    "@fontsource/space-mono": "^5.2.9",
-    "better-sqlite3": "^12.0.0",
-    "rrule": "^2.8.1"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.59.1",
-    "@sveltejs/adapter-node": "^5.2.0",
-    "@sveltejs/kit": "^2.57.1",
-    "@sveltejs/vite-plugin-svelte": "^7.0.0",
-    "@tailwindcss/vite": "^4.0.0",
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^25.6.0",
-    "svelte": "^5.55.1",
-    "svelte-check": "^4.4.6",
-    "tailwindcss": "^4.0.0",
-    "typescript": "^5.5.0",
-    "vite": "^8.0.5",
-    "vitest": "^4.1.4"
-  },
-  "type": "module"
+    "name": "budget-tool-web",
+    "version": "0.0.1",
+    "private": true,
+    "scripts": {
+        "dev": "vite dev",
+        "build": "vite build",
+        "preview": "vite preview",
+        "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:e2e": "playwright test",
+        "test:all": "vitest run && playwright test"
+    },
+    "dependencies": {
+        "@fontsource-variable/fraunces": "^5.2.9",
+        "@fontsource-variable/nunito": "^5.2.7",
+        "@fontsource/space-mono": "^5.2.9",
+        "better-sqlite3": "^12.0.0",
+        "rrule": "^2.8.1"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.59.1",
+        "@sveltejs/adapter-node": "^5.2.0",
+        "@sveltejs/kit": "^2.57.1",
+        "@sveltejs/vite-plugin-svelte": "^7.0.0",
+        "@tailwindcss/vite": "^4.0.0",
+        "@types/better-sqlite3": "^7.6.12",
+        "@types/node": "^25.6.0",
+        "svelte": "^5.55.1",
+        "svelte-check": "^4.4.6",
+        "tailwindcss": "^4.0.0",
+        "typescript": "^5.5.0",
+        "vite": "^8.0.5",
+        "vitest": "^4.1.4"
+    },
+    "type": "module"
 }

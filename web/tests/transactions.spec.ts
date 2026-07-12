@@ -32,7 +32,7 @@ test.describe('Transactions page', () => {
 		await page.getByLabel('Description').fill('Coffee');
 		await page.getByLabel('Amount').fill('-3.50');
 		await page.getByLabel('Merchant').fill('Pret');
-		await page.getByRole('button', { name: 'Add' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Add', exact: true }).click();
 
 		const row = page.getByTestId('transaction-row').filter({ hasText: 'Pret' });
 		await expect(row).toBeVisible();
@@ -47,7 +47,7 @@ test.describe('Transactions page', () => {
 		await page.getByRole('button', { name: '+ Add transaction' }).click();
 		await page.getByLabel('Description').fill('Refund');
 		await page.getByLabel('Amount').fill('15.00');
-		await page.getByRole('button', { name: 'Add' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Add', exact: true }).click();
 
 		const row = page.getByTestId('transaction-row').filter({ hasText: 'Refund' });
 		await expect(row.getByTestId('transaction-amount')).toContainText('£15.00');
