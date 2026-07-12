@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from sync.sync import _fetch_full_history, _last_day_of_month, _prev_month
+from sync.sync import _fetch_full_history, _fetch_incremental, _last_day_of_month, _prev_month
 from tests.conftest import make_transaction
 
 
@@ -76,3 +76,44 @@ def test_backward_walk_current_window_capped_at_today():
     _fetch_full_history(client, 1, today)
     # First window is the current month, from the 1st to today (not month end).
     assert client.calls[0] == (date(2026, 7, 1), date(2026, 7, 12))
+
+
+def test_forward_walk_single_window_for_within_month_since():
+    today = date(2026, 7, 12)
+    tx = make_transaction(1, lunchflow_id="a", date=date(2026, 7, 8))
+    client = _WindowClient([tx])
+    result = _fetch_incremental(client, 1, date(2026, 7, 1), today)
+    assert result == [tx]
+    assert client.calls == [(date(2026, 7, 1), date(2026, 7, 12))]
+
+
+def test_forward_walk_windows_are_contiguous_and_capped_at_today():
+    today = date(2026, 7, 12)
+    client = _WindowClient([])
+    _fetch_incremental(client, 1, date(2026, 5, 10), today)
+    # since is mid-May -> May(10-31), June(1-30), July(1-12)
+    assert client.calls == [
+        (date(2026, 5, 10), date(2026, 5, 31)),
+        (date(2026, 6, 1), date(2026, 6, 30)),
+        (date(2026, 7, 1), date(2026, 7, 12)),
+    ]
+
+
+def test_forward_walk_collects_across_windows():
+    today = date(2026, 7, 12)
+    txs = [
+        make_transaction(1, lunchflow_id="may", date=date(2026, 5, 20)),
+        make_transaction(1, lunchflow_id="jun", date=date(2026, 6, 15)),
+        make_transaction(1, lunchflow_id="jul", date=date(2026, 7, 3)),
+    ]
+    client = _WindowClient(txs)
+    result = _fetch_incremental(client, 1, date(2026, 5, 1), today)
+    assert {tx.lunchflow_id for tx in result} == {"may", "jun", "jul"}
+
+
+def test_forward_walk_no_windows_when_since_after_today():
+    today = date(2026, 7, 12)
+    client = _WindowClient([])
+    result = _fetch_incremental(client, 1, date(2026, 7, 20), today)
+    assert result == []
+    assert client.calls == []
