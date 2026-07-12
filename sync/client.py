@@ -31,10 +31,20 @@ class LunchflowClient:
         response.raise_for_status()
         return [_map_account(a) for a in response.json()["accounts"]]
 
-    def get_transactions(self, account_id: int) -> list[Transaction]:
+    def get_transactions(
+        self,
+        account_id: int,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+    ) -> list[Transaction]:
+        params: dict[str, str] = {"include_pending": "true"}
+        if date_from is not None:
+            params["from"] = date_from.isoformat()
+        if date_to is not None:
+            params["to"] = date_to.isoformat()
         response = self._client.get(
             f"/accounts/{account_id}/transactions",
-            params={"include_pending": "true"},
+            params=params,
         )
         response.raise_for_status()
         result = []
