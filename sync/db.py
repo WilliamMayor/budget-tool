@@ -196,6 +196,23 @@ def has_opening_balance(conn: sqlite3.Connection, account_id: int) -> bool:
     return row is not None
 
 
+def get_latest_transaction_date(
+    conn: sqlite3.Connection, account_id: int
+) -> Optional[date]:
+    """Most recent transaction date for an account, ignoring opening-balance
+    rows and NULL dates. None when the account has no such transactions."""
+    row = conn.execute(
+        """
+        SELECT MAX(date) AS latest FROM transactions
+        WHERE account_id = ? AND status != ? AND date IS NOT NULL
+        """,
+        (account_id, TransactionStatus.OPENING_BALANCE.value),
+    ).fetchone()
+    if row is None or row["latest"] is None:
+        return None
+    return date.fromisoformat(row["latest"])
+
+
 # ---------------------------------------------------------------------------
 # Splits
 # ---------------------------------------------------------------------------
