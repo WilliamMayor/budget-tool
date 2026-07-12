@@ -7,7 +7,7 @@ adjustor if the fetched history doesn't account for the full balance.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import httpx
@@ -22,6 +22,42 @@ from .db import (
     ensure_round_up_split,
 )
 from .models import Account, Transaction, TransactionStatus
+
+
+_MAX_BLANK_MONTHS = 6
+
+
+def _last_day_of_month(year: int, month: int) -> date:
+    if month == 12:
+        return date(year, 12, 31)
+    return date(year, month + 1, 1) - timedelta(days=1)
+
+
+def _prev_month(year: int, month: int) -> tuple[int, int]:
+    if month == 1:
+        return year - 1, 12
+    return year, month - 1
+
+
+def _fetch_full_history(client: object, lunchflow_id: int, today: date) -> list[Transaction]:
+    """First-sync walk: step back month-by-month from `today`, stopping after
+    _MAX_BLANK_MONTHS consecutive empty months. Returns every transaction found."""
+    collected: list[Transaction] = []
+    consecutive_blank = 0
+    year, month = today.year, today.month
+    while consecutive_blank < _MAX_BLANK_MONTHS:
+        window_start = date(year, month, 1)
+        window_end = min(_last_day_of_month(year, month), today)
+        window = client.get_transactions(  # type: ignore[attr-defined]
+            lunchflow_id, date_from=window_start, date_to=window_end
+        )
+        if window:
+            collected.extend(window)
+            consecutive_blank = 0
+        else:
+            consecutive_blank += 1
+        year, month = _prev_month(year, month)
+    return collected
 
 
 def sync_account(conn: sqlite3.Connection, client: object, account: Account) -> dict:
