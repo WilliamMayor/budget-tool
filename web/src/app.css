@@ -1,10 +1,115 @@
 @import "tailwindcss";
-@import "@fontsource-variable/space-grotesk";
 @import "@fontsource/space-mono/400.css";
 @import "@fontsource/space-mono/700.css";
+@import "@fontsource-variable/fraunces/wght.css";
+@import "@fontsource-variable/nunito/wght.css";
+
+/* =========================================================
+   EARMARK DESIGN TOKENS (Tailwind v4 @theme)
+   ---------------------------------------------------------
+   The whole brand is expressed as Tailwind tokens, so every
+   component is built from ordinary utility classes
+   (bg-sun, border-ink, rounded-card, shadow-rest, ease-bounce…)
+   or the small reusable Svelte components in src/lib/components.
+   The only bespoke CSS below is the halftone page background and
+   two utilities Tailwind has no primitive for (tabular mono
+   numbers + cartoon icon strokes).
+   ========================================================= */
 
 @theme {
-  --font-sans: "Space Grotesk Variable", system-ui, sans-serif;
-  --font-mono: "Space Mono", monospace;
-  --color-navy: #1e3a5f;
+    /* Brand palette (candy-jar saturated) + readable ink variants */
+    --color-sun: #ffd23f;
+    --color-sun-ink: #8a6a00;
+    --color-grass: #5ec26a;
+    --color-grass-ink: #1f5a2a;
+    --color-tomato: #ff5a47;
+    --color-tomato-ink: #7a1a10;
+    --color-grape: #a96cff;
+    --color-grape-ink: #4a1f8a;
+    --color-sky: #4dbfff;
+    --color-sky-ink: #0a4f7a;
+    --color-bubble: #ff8fc1;
+    --color-bubble-ink: #8a1f55;
+
+    /* Ink & paper backbone */
+    --color-ink: #1a1410;
+    --color-paper: #fbf4e4;
+    --color-paper-2: #f5ebd1;
+    --color-fg-muted: #6b5f50;
+    --color-fg-subtle: #9c8f7e;
+
+    /* Type */
+    --font-display: "Fraunces", ui-serif, Georgia, serif;
+    --font-body: "Nunito", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "Space Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    /* Radii */
+    --radius-pill: 999px;
+    --radius-chunk: 14px;
+    --radius-card: 20px;
+
+    /* Hard-offset shadows (no blur) */
+    --shadow-rest: 4px 4px 0 var(--color-ink);
+    --shadow-hover: 6px 6px 0 var(--color-ink);
+    --shadow-press: 0 0 0 var(--color-ink);
+    --shadow-lg: 8px 8px 0 var(--color-ink);
+
+    /* Motion */
+    --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Page halftone — a FIXED layer behind all content. The mask lives on this
+   pseudo-element only, so it fades the dots (not the page content). */
+body {
+    background-color: var(--color-paper);
+}
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+        radial-gradient(circle at 2.2px 2.2px, color-mix(in srgb, var(--color-ink) 65%, transparent) 2.2px, transparent 2.8px),
+        radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--color-ink) 30%, transparent) 1px, transparent 1.6px);
+    background-size: 34px 34px, 17px 17px;
+    background-position: 0 0, 17px 17px;
+}
+
+/* Interactive elements get a pointer cursor. Tailwind v4's preflight leaves
+   buttons with the default arrow, so restore it here for every clickable. */
+button:not(:disabled),
+[role="button"],
+summary,
+select,
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+    cursor: pointer;
+}
+
+/* Page shell — outer padding + vertical rhythm between top-level sections.
+   Every route's <main class="page"> relies on this for its spacing. Fixed/
+   absolute children (modals, docks) are out of flow, so the gap ignores them. */
+@utility page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.25rem 1.25rem 2.5rem;
+}
+
+/* Tabular mono numbers */
+@utility num {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+}
+
+/* Cartoon ink stroke for inline SVG icons */
+@utility ink-icon {
+    stroke: var(--color-ink);
+    stroke-width: 2.5;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }

@@ -2,80 +2,30 @@
     import "../app.css";
     import { page } from "$app/state";
     import type { Snippet } from "svelte";
-    import NavItem from "$lib/components/NavItem.svelte";
 
     let { children }: { children: Snippet } = $props();
-    let menuOpen = $state(false);
 
-    $effect(() => {
-        void page.url.pathname;
-        menuOpen = false;
-    });
+    const accountsActive = $derived(page.url.pathname.startsWith("/accounts"));
+    const settingsActive = $derived(page.url.pathname.startsWith("/settings"));
+
+    const navLink =
+        "font-body text-[13px] font-extrabold uppercase tracking-[0.06em] no-underline pb-1 border-b-2 transition-colors";
 </script>
 
-<header class="bg-navy">
-    <div class="flex items-center justify-between px-4 py-3">
-        <a
-            href="/accounts"
-            class="font-mono font-bold uppercase text-white text-lg tracking-widest"
-        >
+<div class="relative mx-auto min-h-screen max-w-[440px]">
+    <header class="sticky top-0 z-30 flex items-center justify-between border-b-[3px] border-ink bg-ink px-5 py-3.5">
+        <a href="/accounts" class="flex items-center gap-2.5 font-display text-[22px] font-black uppercase leading-none tracking-[0.08em] text-paper no-underline">
+            <img src="/logo-mark.svg" alt="" class="h-[30px] w-[30px]" />
             Earmark
         </a>
 
-        <!-- Desktop: inline links (hidden on mobile) -->
-        <nav class="hidden sm:flex items-center gap-6" aria-label="Global">
-            <NavItem path="/accounts" name="Accounts" />
-            <NavItem path="/settings" name="Settings" />
+        <nav class="flex gap-[18px]" aria-label="Global">
+            <a href="/accounts" aria-current={accountsActive ? "page" : undefined}
+                class="{navLink} {accountsActive ? 'text-paper border-sun' : 'text-paper/55 border-transparent hover:text-paper'}">Accounts</a>
+            <a href="/settings" aria-current={settingsActive ? "page" : undefined}
+                class="{navLink} {settingsActive ? 'text-paper border-sun' : 'text-paper/55 border-transparent hover:text-paper'}">Settings</a>
         </nav>
+    </header>
 
-        <!-- Mobile: hamburger button (hidden on desktop) -->
-        <button
-            class="sm:hidden p-1 text-white/60 hover:text-white"
-            aria-label={menuOpen ? "Close menu" : "Open menu"}
-            onclick={() => (menuOpen = !menuOpen)}
-        >
-            {#if menuOpen}
-                <svg
-                    class="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                >
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M6 18L18 6M6 6l12 12"
-                    />
-                </svg>
-            {:else}
-                <svg
-                    class="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                >
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M4 6h16M4 12h16M4 18h16"
-                    />
-                </svg>
-            {/if}
-        </button>
-    </div>
-
-    <!-- Mobile: expanded column of links -->
-    {#if menuOpen}
-        <nav
-            class="sm:hidden flex flex-col border-t border-white/10 pb-2 text-sm gap-1"
-            aria-label="Global mobile"
-        >
-            <NavItem path="/accounts" name="Accounts" />
-            <NavItem path="/settings" name="Settings" />
-        </nav>
-    {/if}
-</header>
-
-{@render children()}
+    {@render children()}
+</div>

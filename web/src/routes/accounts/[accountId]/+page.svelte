@@ -2,411 +2,249 @@
     import { enhance } from '$app/forms';
     import { goto } from '$app/navigation';
     import { formatCurrency, formatDate, formatSignedCurrency } from '$lib/format.js';
-    import { inferGoalType, getRemainingAmount, getEstimatedCompletion } from '$lib/goal-utils.js';
-    import Expander from '$lib/components/Expander.svelte';
-    import WithdrawDrawer from '$lib/components/WithdrawDrawer.svelte';
+    import EnvelopeTree from '$lib/components/EnvelopeTree.svelte';
+    import Card from '$lib/components/Card.svelte';
+    import Button from '$lib/components/Button.svelte';
+    import Modal from '$lib/components/Modal.svelte';
+    import Field from '$lib/components/Field.svelte';
+    import SelectField from '$lib/components/SelectField.svelte';
 
     let { data } = $props();
+    const account = $derived(data.account);
 
-    let showAddSplitForm = $state(false);
-    let addSplitAmount = $state('');
-    let addSplitNote = $state('');
+    const earmarked = $derived(data.envelopes.reduce((sum, e) => sum + e.goal_balance, 0));
+
+    // ---- Create modals -------------------------------------------------------
+    let envModalOpen = $state(false);
+    let envModalGroup = $state<number | null>(null);
+    let grpModalOpen = $state(false);
+    let grpModalParent = $state<number | null>(null);
+
+    function addEnvelope(groupId: number | null = null) {
+        envModalGroup = groupId;
+        envModalOpen = true;
+    }
+    function addGroup(parentId: number | null = null) {
+        grpModalParent = parentId;
+        grpModalOpen = true;
+    }
+
+    // ---- Allocation queue ----------------------------------------------------
     let selectedSplitId = $state<number | null>(null);
+    let showAddSplitForm = $state(false);
 
-    const currentSplits = $derived(
-        data.currentItem?.kind === 'transaction' ? data.currentItem.splits : []
-    );
-
+    const currentSplits = $derived(data.currentItem?.kind === 'transaction' ? data.currentItem.splits : []);
     const activeSplitId = $derived.by(() => {
-        if (selectedSplitId !== null && currentSplits.some(s => s.id === selectedSplitId && !s.is_allocated)) {
-            return selectedSplitId;
-        }
-        return currentSplits.find(s => !s.is_allocated)?.id ?? null;
+        if (selectedSplitId !== null && currentSplits.some((s) => s.id === selectedSplitId && !s.is_allocated)) return selectedSplitId;
+        return currentSplits.find((s) => !s.is_allocated)?.id ?? null;
+    });
+    const activeSplit = $derived(currentSplits.find((s) => s.id === activeSplitId) ?? null);
+
+    const allocKind = $derived(
+        data.currentItem?.kind === 'withdrawal' ? ('withdrawal' as const)
+            : data.currentItem?.kind === 'transaction' ? ('split' as const) : null
+    );
+    const withdrawalId = $derived(data.currentItem?.kind === 'withdrawal' ? data.currentItem.withdrawal.id : null);
+    const allocAmount = $derived.by(() => {
+        if (data.currentItem?.kind === 'withdrawal') return parseFloat(data.currentItem.withdrawal.amount);
+        if (activeSplit) return parseFloat(activeSplit.amount);
+        return 0;
+    });
+    // Credits and withdrawals add to an envelope; debits subtract.
+    const allocSign = $derived.by<1 | -1>(() => {
+        if (data.currentItem?.kind === 'transaction') return data.currentItem.tx.credit_debit_indicator === 'CRDT' ? 1 : -1;
+        return 1;
     });
 
+    let dockHeight = $state(0);
     let touchStartX = $state(0);
-
-    function handleTouchStart(e: TouchEvent) {
-        touchStartX = e.touches[0].clientX;
-    }
-
+    function handleTouchStart(e: TouchEvent) { touchStartX = e.touches[0].clientX; }
     function handleTouchEnd(e: TouchEvent) {
         const delta = e.changedTouches[0].clientX - touchStartX;
-        if (Math.abs(delta) < 50) return;
-        const { queue, currentItemIndex } = data;
-        if (queue.length === 0) return;
-        const nextIndex =
-            delta < 0
-                ? Math.min(currentItemIndex + 1, queue.length - 1)
-                : Math.max(currentItemIndex - 1, 0);
-        if (nextIndex !== currentItemIndex) {
-            goto(`?tx=${nextIndex}`, { replaceState: true });
-        }
+        if (Math.abs(delta) < 50 || data.queue.length === 0) return;
+        const next = delta < 0 ? Math.min(data.currentItemIndex + 1, data.queue.length - 1) : Math.max(data.currentItemIndex - 1, 0);
+        if (next !== data.currentItemIndex) goto(`?tx=${next}`, { replaceState: true });
     }
 
-    const account = $derived(data.account);
+    const arrowBtn =
+        'flex h-9 w-9 items-center justify-center rounded-full border-[3px] border-ink bg-white shadow-[3px_3px_0_var(--color-ink)] transition-[transform,box-shadow] duration-[180ms] ease-bounce hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_var(--color-ink)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none disabled:opacity-40 disabled:!translate-x-0 disabled:!translate-y-0';
 </script>
 
 <svelte:head>
     <title>{account.name ?? account.institution_name} — EARMARK</title>
 </svelte:head>
 
-<!-- Round-up toggle -->
-<div class="bg-white border-b border-gray-200 px-4 py-3 max-w-lg mx-auto w-full">
-    <form method="POST" action="?/toggle_round_up" use:enhance class="flex items-center justify-between gap-3">
-        <div>
-            <p class="text-sm font-medium text-gray-900">Round Up</p>
-            <p class="text-xs text-gray-500">Save the spare change from every transaction</p>
-        </div>
-        <input type="hidden" name="enabled" value={account.round_up_since !== null ? '0' : '1'} />
-        <button
-            type="submit"
-            class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            class:bg-blue-600={account.round_up_since !== null}
-            class:bg-gray-200={account.round_up_since === null}
-            role="switch"
-            aria-checked={account.round_up_since !== null}
-            aria-label="Toggle round up"
-        >
-            <span
-                class="pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow ring-0 transition duration-200"
-                class:translate-x-5={account.round_up_since !== null}
-                class:translate-x-0={account.round_up_since === null}
-            ></span>
-        </button>
-    </form>
-</div>
-
-<!-- Envelope list -->
-<main class="min-h-screen bg-slate-50 p-4 space-y-3 max-w-lg mx-auto w-full"
-    class:pb-48={data.mode === 'allocate'}>
-
-    <Expander label="+ New envelope" muted>
-        {#snippet children(close)}
-            <form
-                method="POST"
-                action="?/create_envelope"
-                use:enhance={() => {
-                    return async ({ update }) => {
-                        await update();
-                        close();
-                    };
-                }}
-            >
-                <label class="block text-sm font-medium text-gray-700 mb-1" for="new-envelope-name">
-                    Envelope name
-                </label>
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                    id="new-envelope-name"
-                    name="name"
-                    type="text"
-                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="e.g. Groceries"
-                    required
-                    autofocus
-                />
-                <div class="flex gap-2 mt-3">
-                    <button type="submit" class="flex-1 bg-blue-600 text-white text-sm font-medium rounded-lg py-2 hover:bg-blue-700">
-                        Create
-                    </button>
-                    <button type="button" onclick={close} class="flex-1 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg py-2 hover:bg-gray-200">
-                        Cancel
-                    </button>
-                </div>
-            </form>
+<main class="page" style:padding-bottom={data.mode === 'allocate' ? dockHeight + 24 + 'px' : undefined}>
+    <!-- Summary cells -->
+    <div class="grid grid-cols-3 gap-2">
+        {#snippet cell(labelText: string, valueText: string, warn = false)}
+            <div class="relative rounded-chunk border-[3px] border-ink px-3 py-2.5 {warn ? 'bg-tomato text-white' : 'bg-paper-2 text-ink'}">
+                <span class="pointer-events-none absolute inset-1 rounded-[10px] border-[1.5px] border-dashed {warn ? 'border-white/55' : 'border-ink/40'}"></span>
+                <div class="text-[10px] font-extrabold uppercase tracking-wide opacity-70">{labelText}</div>
+                <div class="num mt-0.5 text-[15px] leading-tight">{valueText}</div>
+            </div>
         {/snippet}
-    </Expander>
+        {@render cell('Balance', formatCurrency(account.balance, account.currency))}
+        {@render cell('Earmarked', formatCurrency(earmarked.toFixed(2), account.currency))}
+        {@render cell('To earmark', String(data.queue.length), data.queue.length > 0)}
+    </div>
 
-    {#each data.envelopes as envelope (envelope.id)}
-        {@const envGoalType = inferGoalType(envelope)}
-        {@const remaining = envGoalType !== null ? getRemainingAmount(envelope) : 0}
-        {@const goalAmount = envelope.goal_amount ? parseFloat(envelope.goal_amount) : 0}
-        {@const balance = envelope.goal_balance}
-        {@const activeItem = data.currentItem}
-        {@const unallocatedSplit = (data.mode === 'allocate' && activeItem?.kind === 'transaction' && activeSplitId !== null)
-            ? (currentSplits.find(s => s.id === activeSplitId) ?? null)
-            : null}
-        {@const projectedBalance = unallocatedSplit && activeItem?.kind === 'transaction'
-            ? (activeItem.tx.credit_debit_indicator === 'CRDT'
-                ? balance + parseFloat(unallocatedSplit.amount)
-                : balance - parseFloat(unallocatedSplit.amount))
-            : null}
-        {@const withdrawalItem = data.mode === 'allocate' && activeItem?.kind === 'withdrawal'
-            ? activeItem.withdrawal
-            : null}
-        {@const projectedBalanceFromWithdrawal = withdrawalItem
-            ? balance + parseFloat(withdrawalItem.amount)
-            : null}
-        {@const isFunded = envGoalType !== null && remaining === 0}
-        {@const progressPct = envGoalType !== null && goalAmount > 0
-            ? Math.min(100, Math.round((envelope.goal_balance / goalAmount) * 100))
-            : envelope.percent_of_total}
-        {@const estCompletion = envGoalType === 'open_ended'
-            ? getEstimatedCompletion(envelope, envelope.goal_balance, new Date())
-            : null}
+    <!-- Add envelope / group -->
+    <div class="grid grid-cols-2 gap-3">
+        <Button variant="secondary" onclick={() => addEnvelope(null)}>+ New envelope</Button>
+        <Button variant="secondary" onclick={() => addGroup(null)}>+ New group</Button>
+    </div>
 
-        <a
-            href="/accounts/{account.id}/envelopes/{envelope.id}"
-            class="block bg-white rounded-xl border border-gray-200 p-4 m-0 shadow-sm hover:border-blue-300 transition-colors"
-            data-testid="envelope-card"
-        >
-            <div class="flex items-start justify-between mb-2">
-                <div class="flex-1 min-w-0">
-                    <p class="font-medium text-gray-900 truncate">{envelope.name}</p>
-                    {#if envGoalType === null}
-                        <p class="text-xs text-gray-400">{progressPct.toFixed(0)}% of spend</p>
-                    {:else if envGoalType === 'recurring' || envGoalType === 'one_off'}
-                        <p class="text-xs text-gray-400">
-                            {#if envelope.goal_due_date}Due {formatDate(envelope.goal_due_date)}
-                            {:else if envelope.goal_dtstart}Recurring{/if}
-                        </p>
-                    {:else if envGoalType === 'open_ended'}
-                        <p class="text-xs text-gray-400">
-                            {#if estCompletion}est. {estCompletion.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}
-                            {:else}Open-ended{/if}
-                        </p>
-                    {/if}
-                </div>
-                <div class="text-right ml-4 shrink-0">
-                    <p class="text-xl font-bold font-mono text-gray-900">
-                        {formatCurrency(balance.toFixed(2), account.currency)}
-                    </p>
-                    {#if envGoalType !== null}
-                        <p class="text-xs text-gray-400">of {formatCurrency(envelope.goal_amount!, account.currency)}</p>
-                    {/if}
-                    {#if projectedBalance !== null}
-                        <p class="text-xs text-gray-400">→ <span class="font-mono">{formatCurrency(projectedBalance.toFixed(2), account.currency)}</span></p>
-                    {/if}
-                    {#if projectedBalanceFromWithdrawal !== null}
-                        <p class="text-xs text-gray-400">→ <span class="font-mono">{formatCurrency(projectedBalanceFromWithdrawal.toFixed(2), account.currency)}</span></p>
-                    {/if}
-                </div>
-            </div>
-
-            <div class="w-full bg-gray-100 rounded-full h-1.5 mb-2">
-                <div
-                    class="h-1.5 rounded-full transition-all duration-300"
-                    class:bg-green-500={isFunded}
-                    class:bg-indigo-500={!isFunded && envGoalType !== null}
-                    class:bg-blue-600={envGoalType === null}
-                    style="width: {progressPct}%"
-                ></div>
-            </div>
-
-            <div class="flex items-center justify-between">
-                {#if envGoalType !== null}
-                    {#if isFunded}
-                        <p class="text-xs text-green-600 font-medium">Goal reached</p>
-                    {:else}
-                        <p class="text-xs text-gray-500">{formatCurrency(remaining.toFixed(2), account.currency)} still needed</p>
-                    {/if}
-                {:else}
-                    <span></span>
-                {/if}
-
-                {#if data.mode === 'allocate' && unallocatedSplit}
-                    <form method="POST" action="?/allocate" use:enhance onclick={(e) => e.stopPropagation()}>
-                        <input type="hidden" name="envelope_id" value={envelope.id} />
-                        <input type="hidden" name="split_id" value={unallocatedSplit.id} />
-                        <input type="hidden" name="current_index" value={data.currentItemIndex} />
-                        <button type="submit" class="bg-blue-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-700" data-testid="allocate-btn">
-                            Allocate {formatCurrency(parseFloat(unallocatedSplit.amount).toFixed(2), account.currency)}
-                        </button>
-                    </form>
-                {/if}
-
-                {#if data.mode === 'allocate' && withdrawalItem}
-                    <form method="POST" action="?/allocate_withdrawal" use:enhance onclick={(e) => e.stopPropagation()}>
-                        <input type="hidden" name="withdrawal_id" value={withdrawalItem.id} />
-                        <input type="hidden" name="envelope_id" value={envelope.id} />
-                        <input type="hidden" name="current_index" value={data.currentItemIndex} />
-                        <button type="submit" class="bg-blue-600 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-blue-700" data-testid="allocate-withdrawal-btn">
-                            Allocate {formatCurrency(parseFloat(withdrawalItem.amount).toFixed(2), account.currency)}
-                        </button>
-                    </form>
-                {/if}
-            </div>
-        </a>
-
-        <WithdrawDrawer {envelope} />
-    {/each}
+    <EnvelopeTree
+        nodes={data.tree}
+        groups={data.groups}
+        currency={account.currency}
+        accountId={account.id}
+        allocateMode={data.mode === 'allocate'}
+        {allocAmount}
+        {allocSign}
+        {allocKind}
+        allocSplitId={activeSplitId}
+        {withdrawalId}
+        currentItemIndex={data.currentItemIndex}
+        onAddEnvelope={addEnvelope}
+        onAddGroup={addGroup}
+    />
 </main>
 
-<!-- Dock -->
+<!-- Create-envelope modal -->
+<Modal bind:open={envModalOpen} title="New envelope">
+    <form method="POST" action="?/create_envelope" use:enhance={() => async ({ update }) => { await update(); envModalOpen = false; }} class="flex flex-col gap-4">
+        <input type="hidden" name="group_id" value={envModalGroup ?? ''} />
+        <!-- svelte-ignore a11y_autofocus -->
+        <Field label="Envelope name" name="name" placeholder="e.g. Groceries" required autofocus />
+        <div class="flex gap-3">
+            <Button type="submit" variant="success" fullWidth>Create</Button>
+            <Button type="button" variant="secondary" fullWidth onclick={() => (envModalOpen = false)}>Cancel</Button>
+        </div>
+    </form>
+</Modal>
+
+<!-- Create-group modal -->
+<Modal bind:open={grpModalOpen} title="New group">
+    <form method="POST" action="?/create_group" use:enhance={() => async ({ update }) => { await update(); grpModalOpen = false; }} class="flex flex-col gap-4">
+        <input type="hidden" name="parent_id" value={grpModalParent ?? ''} />
+        <!-- svelte-ignore a11y_autofocus -->
+        <Field label="Group name" name="name" placeholder="e.g. Savings" required autofocus />
+        <SelectField label="Colour" name="tint">
+            <option value="budget">Budget (yellow)</option>
+            <option value="monthly">Monthly (blue)</option>
+            <option value="savings">Savings (green)</option>
+            <option value="fun">Fun (pink)</option>
+        </SelectField>
+        <div class="flex gap-3">
+            <Button type="submit" variant="success" fullWidth>Create</Button>
+            <Button type="button" variant="secondary" fullWidth onclick={() => (grpModalOpen = false)}>Cancel</Button>
+        </div>
+    </form>
+</Modal>
+
+<!-- Allocation dock -->
 {#if data.mode === 'allocate' && data.currentItem}
     {@const item = data.currentItem}
-
     <div
         role="region"
         aria-label="Allocation queue"
-        class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg max-w-lg mx-auto"
+        data-testid="allocation-dock"
+        bind:clientHeight={dockHeight}
         ontouchstart={handleTouchStart}
         ontouchend={handleTouchEnd}
-        data-testid="allocation-dock"
+        class="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-[440px] border-t-[3px] border-ink bg-sun px-4 pb-[18px] pt-3.5 shadow-[0_-4px_0_var(--color-ink)]"
     >
-        <div class="flex items-center justify-between px-4 pt-3 pb-1">
-            <button
-                onclick={() => goto(`?tx=${Math.max(0, data.currentItemIndex - 1)}`, { replaceState: true })}
-                disabled={data.currentItemIndex === 0}
-                class="p-1 text-gray-400 disabled:opacity-30 hover:text-gray-600"
-                aria-label="Previous item"
-            >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-                </svg>
+        <div class="mb-2 flex items-center justify-between">
+            <button class={arrowBtn} onclick={() => goto(`?tx=${Math.max(0, data.currentItemIndex - 1)}`, { replaceState: true })} disabled={data.currentItemIndex === 0} aria-label="Previous item">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m15 19-7-7 7-7" /></svg>
             </button>
-            <span class="text-xs text-gray-400">{data.currentItemIndex + 1} of {data.queue.length}</span>
-            <button
-                onclick={() => goto(`?tx=${Math.min(data.queue.length - 1, data.currentItemIndex + 1)}`, { replaceState: true })}
-                disabled={data.currentItemIndex === data.queue.length - 1}
-                class="p-1 text-gray-400 disabled:opacity-30 hover:text-gray-600"
-                aria-label="Next item"
-            >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                </svg>
+            <span class="rounded-full border-[3px] border-ink bg-white px-3.5 py-1 font-mono text-[13px] font-bold text-ink">{data.currentItemIndex + 1} of {data.queue.length}</span>
+            <button class={arrowBtn} onclick={() => goto(`?tx=${Math.min(data.queue.length - 1, data.currentItemIndex + 1)}`, { replaceState: true })} disabled={data.currentItemIndex === data.queue.length - 1} aria-label="Next item">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7" /></svg>
             </button>
         </div>
 
-        <div class="px-4 pb-4">
-            {#if item.kind === 'withdrawal'}
-                <div class="flex items-start justify-between mb-1">
-                    <div class="flex-1 min-w-0">
-                        <p class="font-semibold text-gray-900 truncate">Withdrawal from {item.withdrawal.from_envelope_name}</p>
-                        {#if item.withdrawal.note}
-                            <p class="text-xs text-gray-400 truncate">{item.withdrawal.note}</p>
-                        {/if}
-                        <p class="text-xs text-gray-400">{formatDate(item.withdrawal.created_at.slice(0, 10))}</p>
-                    </div>
-                    <div class="text-right ml-4 shrink-0">
-                        <p class="font-bold text-gray-900 font-mono">
-                            {formatCurrency(parseFloat(item.withdrawal.amount).toFixed(2), account.currency)}
-                        </p>
-                    </div>
+        {#if item.kind === 'withdrawal'}
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                    <div class="truncate font-display text-lg font-extrabold text-ink">Withdrawal from {item.withdrawal.from_envelope_name}</div>
+                    {#if item.withdrawal.note}<div class="truncate text-xs font-bold text-ink/65">{item.withdrawal.note}</div>{/if}
+                    <div class="text-xs font-bold text-ink/65">{formatDate(item.withdrawal.created_at.slice(0, 10))}</div>
                 </div>
-            {:else}
-                {@const tx = item.tx}
-                {@const splits = currentSplits}
-                {@const isMultiSplit = splits.length > 1}
-                {@const unallocatedSplits = splits.filter(s => !s.is_allocated)}
-
-                <div class="flex items-start justify-between mb-1">
-                    <div class="flex-1 min-w-0">
-                        <p class="font-semibold text-gray-900 truncate">{tx.merchant ?? 'Unknown merchant'}</p>
-                        {#if tx.description}<p class="text-xs text-gray-400 truncate">{tx.description}</p>{/if}
-                        <p class="text-xs text-gray-400">{formatDate(tx.date)}</p>
-                    </div>
-                    <div class="text-right ml-4 shrink-0">
-                        <p class="font-bold text-gray-900 font-mono" class:text-red-600={tx.credit_debit_indicator === 'DBIT'}>
-                            {formatSignedCurrency(tx.amount, tx.currency, tx.credit_debit_indicator)}
-                        </p>
-                    </div>
+                <div class="num text-xl">{formatCurrency(parseFloat(item.withdrawal.amount).toFixed(2), account.currency)}</div>
+            </div>
+            <p class="mt-2 text-xs font-bold text-ink/70">Tap an envelope to earmark this.</p>
+        {:else}
+            {@const tx = item.tx}
+            {@const splits = currentSplits}
+            {@const unallocatedSplits = splits.filter((s) => !s.is_allocated)}
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                    <div class="truncate font-display text-lg font-extrabold text-ink">{tx.merchant ?? 'Unknown merchant'}</div>
+                    {#if tx.description}<div class="truncate text-xs font-bold text-ink/65">{tx.description}</div>{/if}
+                    <div class="text-xs font-bold text-ink/65">{formatDate(tx.date)}</div>
                 </div>
+                <div class="num text-xl {tx.credit_debit_indicator === 'DBIT' ? 'text-tomato-ink' : 'text-ink'}">{formatSignedCurrency(tx.amount, tx.currency, tx.credit_debit_indicator)}</div>
+            </div>
 
-                {#if isMultiSplit}
-                    <p class="text-xs text-gray-400 mb-2">✂ Split ({unallocatedSplits.length} parts left)</p>
-                {/if}
-
-                <div class="mt-2 space-y-2">
-                    {#each splits as split (split.id)}
-                        {@const isActiveSplit = !split.is_allocated && split.id === activeSplitId}
-                        <div
-                            class="rounded-lg p-2 text-sm border"
-                            class:border-blue-400={isActiveSplit}
-                            class:border-gray-100={!isActiveSplit}
-                            class:cursor-pointer={!split.is_allocated}
-                            onclick={() => { if (!split.is_allocated) selectedSplitId = split.id; }}
-                        >
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="flex items-center gap-2 min-w-0">
-                                    {#if !split.is_allocated}
-                                        <div class="shrink-0 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center"
-                                             class:border-blue-500={isActiveSplit} class:border-gray-300={!isActiveSplit}>
-                                            {#if isActiveSplit}<div class="w-1.5 h-1.5 rounded-full bg-blue-500"></div>{/if}
-                                        </div>
-                                    {/if}
-                                    {#if split.is_round_up}<span class="text-xs text-purple-600 font-medium shrink-0">Round Up</span>{/if}
-                                    <span class="font-medium text-gray-900 font-mono" class:text-red-600={tx.credit_debit_indicator === 'DBIT'}>
-                                        {formatSignedCurrency(split.amount, tx.currency, tx.credit_debit_indicator)}
-                                    </span>
-                                    {#if split.note}<span class="text-gray-400 truncate">— {split.note}</span>{/if}
-                                    {#if split.is_allocated && split.envelope_name}<span class="text-green-600 ml-1 shrink-0">{split.envelope_name}</span>{/if}
-                                </div>
-                                <div class="flex items-center gap-1 shrink-0">
-                                    {#if split.is_default && !split.is_round_up}
-                                        <button
-                                            type="button"
-                                            onclick={(e) => { e.stopPropagation(); showAddSplitForm = !showAddSplitForm; addSplitAmount = ''; addSplitNote = ''; }}
-                                            class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded hover:bg-gray-200"
-                                            data-testid="split-btn"
-                                        >✂ Split</button>
-                                    {/if}
-                                    {#if !split.is_default && !split.is_round_up}
-                                        <form method="POST" action="?/delete_split" use:enhance>
-                                            <input type="hidden" name="split_id" value={split.id} />
-                                            <input type="hidden" name="current_index" value={data.currentItemIndex} />
-                                            <button
-                                                type="submit"
-                                                class="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
-                                                onclick={(e) => { e.stopPropagation(); if (!confirm('Delete this split?')) e.preventDefault(); }}
-                                            >Delete</button>
-                                        </form>
-                                    {/if}
-                                </div>
-                            </div>
-                        </div>
-                    {/each}
-
-                    {#if showAddSplitForm}
-                        <form
-                            method="POST"
-                            action="?/create_split"
-                            use:enhance={() => {
-                                return async ({ update }) => {
-                                    await update();
-                                    showAddSplitForm = false;
-                                    addSplitAmount = '';
-                                    addSplitNote = '';
-                                };
-                            }}
-                            class="border border-gray-200 rounded-lg p-3 space-y-2 mt-2"
-                        >
-                            <input type="hidden" name="tx_id" value={item.kind === 'transaction' ? item.tx.id : ''} />
-                            <input type="hidden" name="current_index" value={data.currentItemIndex} />
-                            <div class="flex gap-2">
-                                <div class="flex-1">
-                                    <label class="block text-xs text-gray-500 mb-1" for="split-amount">Amount</label>
-                                    <input
-                                        id="split-amount"
-                                        name="amount"
-                                        type="text"
-                                        bind:value={addSplitAmount}
-                                        placeholder="e.g. 12.50"
-                                        class="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                                        required
-                                    />
-                                </div>
-                                <div class="flex-1">
-                                    <label class="block text-xs text-gray-500 mb-1" for="split-note">Note</label>
-                                    <input
-                                        id="split-note"
-                                        name="note"
-                                        type="text"
-                                        bind:value={addSplitNote}
-                                        placeholder="optional"
-                                        class="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                            </div>
-                            <div class="flex gap-2">
-                                <button type="submit" class="flex-1 bg-blue-600 text-white text-xs font-medium rounded-lg py-1.5 hover:bg-blue-700">Add split</button>
-                                <button type="button" onclick={() => { showAddSplitForm = false; }} class="flex-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg py-1.5 hover:bg-gray-200">Cancel</button>
-                            </div>
-                        </form>
-                    {/if}
-                </div>
+            {#if splits.length > 1}
+                <p class="mt-2 text-xs font-bold text-ink/60">✂ Split ({unallocatedSplits.length} part{unallocatedSplits.length === 1 ? '' : 's'} left)</p>
             {/if}
-        </div>
+
+            <div class="mt-2 flex flex-col gap-2">
+                {#each splits as split (split.id)}
+                    {@const isActive = !split.is_allocated && split.id === activeSplitId}
+                    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                    <div
+                        class="flex items-center justify-between gap-2 rounded-chunk border-[2.5px] p-2 text-sm {isActive ? 'border-ink bg-white' : 'border-ink/25'} {split.is_allocated ? '' : 'cursor-pointer'}"
+                        role={split.is_allocated ? undefined : 'button'}
+                        tabindex={split.is_allocated ? undefined : 0}
+                        onclick={() => { if (!split.is_allocated) selectedSplitId = split.id; }}
+                        onkeydown={(e) => { if (!split.is_allocated && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectedSplitId = split.id; } }}
+                    >
+                        <div class="flex min-w-0 items-center gap-2">
+                            {#if !split.is_allocated}
+                                <span data-testid="split-radio" class="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border-2 {isActive ? 'border-ink' : 'border-ink/35'}">
+                                    {#if isActive}<span class="h-1.5 w-1.5 rounded-full bg-ink"></span>{/if}
+                                </span>
+                            {/if}
+                            {#if split.is_round_up}<span class="shrink-0 text-xs font-extrabold text-grape-ink">Round Up</span>{/if}
+                            <span class="num {tx.credit_debit_indicator === 'DBIT' ? 'text-tomato-ink' : 'text-ink'}">{formatSignedCurrency(split.amount, tx.currency, tx.credit_debit_indicator)}</span>
+                            {#if split.note}<span class="truncate text-ink/50">— {split.note}</span>{/if}
+                            {#if split.is_allocated && split.envelope_name}<span class="ml-1 shrink-0 truncate font-bold text-grass-ink">{split.envelope_name}</span>{/if}
+                        </div>
+                        <div class="flex shrink-0 items-center gap-1">
+                            {#if split.is_default && !split.is_round_up}
+                                <button type="button" data-testid="split-btn" class="rounded-full border-2 border-ink bg-white px-2 py-1 text-xs font-bold" onclick={(e) => { e.stopPropagation(); showAddSplitForm = !showAddSplitForm; }}>✂ Split</button>
+                            {/if}
+                            {#if !split.is_default && !split.is_round_up}
+                                <form method="POST" action="?/delete_split" use:enhance>
+                                    <input type="hidden" name="split_id" value={split.id} />
+                                    <input type="hidden" name="current_index" value={data.currentItemIndex} />
+                                    <button type="submit" data-testid="delete-split-btn" class="px-2 py-1 text-xs font-bold text-tomato-ink" onclick={(e) => { e.stopPropagation(); if (!confirm('Delete this split?')) e.preventDefault(); }}>Delete</button>
+                                </form>
+                            {/if}
+                        </div>
+                    </div>
+                {/each}
+
+                {#if showAddSplitForm}
+                    <form method="POST" action="?/create_split" use:enhance={() => async ({ update }) => { await update(); showAddSplitForm = false; }} class="flex flex-col gap-2 rounded-chunk border-[2.5px] border-ink p-3">
+                        <input type="hidden" name="tx_id" value={item.kind === 'transaction' ? item.tx.id : ''} />
+                        <input type="hidden" name="current_index" value={data.currentItemIndex} />
+                        <div class="flex gap-2">
+                            <input name="amount" type="text" aria-label="Amount" placeholder="Amount" required class="block w-full rounded-chunk border-[3px] border-ink bg-white px-3 py-2 font-mono text-sm outline-none" />
+                            <input name="note" type="text" aria-label="Note (optional)" placeholder="Note" class="block w-full rounded-chunk border-[3px] border-ink bg-white px-3 py-2 text-sm outline-none" />
+                        </div>
+                        <div class="flex gap-2">
+                            <Button type="submit" variant="success" size="sm" fullWidth>Add split</Button>
+                            <Button type="button" variant="secondary" size="sm" fullWidth onclick={() => (showAddSplitForm = false)}>Cancel</Button>
+                        </div>
+                    </form>
+                {/if}
+            </div>
+        {/if}
     </div>
 {/if}

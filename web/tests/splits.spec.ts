@@ -46,10 +46,13 @@ test.describe('Split definition (inline on account page)', () => {
 		const dock = page.getByTestId('allocation-dock');
 		await expect(dock.getByText('Groceries')).toBeVisible();
 		// Default split should now show remaining amount (18.50 - 8.00 = 10.50)
-		await expect(dock.locator('.font-mono').filter({ hasText: /10\.50/ }).first()).toBeVisible();
+		await expect(dock.locator('.num').filter({ hasText: /10\.50/ }).first()).toBeVisible();
 	});
 
 	test('delete button removes a split and restores default', async ({ page }) => {
+		// The delete button confirms via window.confirm — accept it.
+		page.on('dialog', (d) => d.accept());
+
 		const url = await getAccountUrl(page);
 		await page.goto(url);
 
@@ -59,9 +62,9 @@ test.describe('Split definition (inline on account page)', () => {
 		await page.getByRole('button', { name: 'Add split' }).click();
 		await page.waitForURL(/\?tx=/);
 
-		// Delete the split - use the dock-scoped button to avoid ambiguity with envelope delete buttons
+		// Delete the split
 		const dock = page.getByTestId('allocation-dock');
-		await dock.getByRole('button', { name: 'Delete' }).click();
+		await dock.getByTestId('delete-split-btn').first().click();
 		await page.waitForURL(/\?tx=/);
 
 		// Default should be restored to full amount
@@ -75,15 +78,14 @@ test.describe('Split selector (radio dots)', () => {
 		await page.goto(url);
 
 		// Navigate to Waitrose (tx3) which has 2 unallocated splits
-		await page.getByLabel('Next transaction').click();
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
+		await page.getByLabel('Next item').click();
 
 		const dock = page.getByTestId('allocation-dock');
 		await expect(dock).toContainText('Waitrose');
 
 		// Should have 2 radio dot elements (one per unallocated split)
-		const radioDots = dock.locator('.rounded-full.border-2');
-		await expect(radioDots).toHaveCount(2);
+		await expect(dock.getByTestId('split-radio')).toHaveCount(2);
 	});
 
 	test('first split is active by default', async ({ page }) => {
@@ -91,8 +93,8 @@ test.describe('Split selector (radio dots)', () => {
 		await page.goto(url);
 
 		// Navigate to Waitrose (tx3)
-		await page.getByLabel('Next transaction').click();
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
+		await page.getByLabel('Next item').click();
 
 		// First split is £12.00 (Groceries) — allocate button should show that amount
 		const btn = page.getByTestId('allocate-btn').first();
@@ -104,8 +106,8 @@ test.describe('Split selector (radio dots)', () => {
 		await page.goto(url);
 
 		// Navigate to Waitrose (tx3) with splits: £12.00 Groceries, £8.00 Household
-		await page.getByLabel('Next transaction').click();
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
+		await page.getByLabel('Next item').click();
 
 		const dock = page.getByTestId('allocation-dock');
 
@@ -124,8 +126,8 @@ test.describe('Split selector (radio dots)', () => {
 		await page.goto(url);
 
 		// Navigate to Waitrose (tx3)
-		await page.getByLabel('Next transaction').click();
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
+		await page.getByLabel('Next item').click();
 
 		const dock = page.getByTestId('allocation-dock');
 		await expect(dock).toContainText('Waitrose');
@@ -137,10 +139,10 @@ test.describe('Split selector (radio dots)', () => {
 		await page.getByTestId('allocate-btn').first().click();
 		await page.waitForURL(/\?tx=/);
 
-		// The Household split should now show as allocated (green, with envelope name)
+		// The Household split should now show as allocated: one of the two splits is
+		// done, so only one unallocated radio dot remains.
 		await expect(dock).toContainText('Waitrose'); // still on same tx
-		const householdRow = dock.locator('.rounded-lg').filter({ hasText: 'Household' });
-		await expect(householdRow.locator('.text-green-600')).toBeVisible();
+		await expect(dock.getByTestId('split-radio')).toHaveCount(1);
 	});
 });
 
@@ -151,8 +153,8 @@ test.describe('Split allocation (inline on account page)', () => {
 		await page.goto(url);
 
 		// Navigate to the Waitrose transaction (index 2 in the unallocated queue)
-		await page.getByLabel('Next transaction').click();
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
+		await page.getByLabel('Next item').click();
 
 		const dock = page.getByTestId('allocation-dock');
 		await expect(dock).toContainText('Waitrose');
@@ -164,8 +166,8 @@ test.describe('Split allocation (inline on account page)', () => {
 		await page.goto(url);
 
 		// Navigate to Waitrose (tx index 2)
-		await page.getByLabel('Next transaction').click();
-		await page.getByLabel('Next transaction').click();
+		await page.getByLabel('Next item').click();
+		await page.getByLabel('Next item').click();
 
 		// Verify we're on the Waitrose transaction with splits
 		const dock = page.getByTestId('allocation-dock');

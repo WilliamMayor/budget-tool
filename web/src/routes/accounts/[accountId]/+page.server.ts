@@ -2,21 +2,32 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import {
     getAccount,
     getEnvelopes,
+    buildEnvelopeTree,
+    getEnvelopeGroups,
     getUnallocatedTransactions,
     getUnallocatedWithdrawals,
     createEnvelope,
+    createGroup,
+    renameGroup,
+    deleteGroup,
+    setGroupTint,
+    moveEnvelopeToGroup,
     allocateSplit,
     allocateWithdrawal,
     createWithdrawal,
     getSplitsWithStatus,
-    setAccountRoundUp,
     createSplit,
-    deleteSplit
+    deleteSplit,
+    setGoal,
+    removeGoal,
+    renameEnvelope,
+    deleteEnvelope
 } from '$lib/queries.js';
 import {
     AlreadyAllocatedError,
     SplitValidationError,
     WithdrawalAlreadyAllocatedError,
+    EnvelopeHasAllocationsError,
     type EnvelopeWithdrawal,
     type SplitWithStatus,
     type Transaction
@@ -33,6 +44,8 @@ export function load({ params, url }) {
     if (!account) error(404, 'Account not found');
 
     const envelopes = getEnvelopes(accountId);
+    const tree = buildEnvelopeTree(accountId);
+    const groups = getEnvelopeGroups(accountId);
 
     const unallocatedWithdrawals = getUnallocatedWithdrawals(accountId);
     const unallocatedTransactions = getUnallocatedTransactions(accountId);
@@ -57,7 +70,7 @@ export function load({ params, url }) {
         };
     }
 
-    return { account, envelopes, queue, mode, currentItemIndex, currentItem };
+    return { account, envelopes, tree, groups, queue, mode, currentItemIndex, currentItem };
 }
 
 export const actions = {
@@ -126,11 +139,13 @@ export const actions = {
         const accountId = parseInt(params.accountId, 10);
         const data = await request.formData();
         const name = (data.get('name') as string)?.trim();
+        const groupRaw = data.get('group_id') as string | null;
+        const groupId = groupRaw ? parseInt(groupRaw, 10) : null;
 
         if (!name) return fail(400, { error: 'Envelope name is required' });
 
         try {
-            createEnvelope(accountId, name);
+            createEnvelope(accountId, name, groupId != null && !isNaN(groupId) ? groupId : null);
         } catch (err) {
             const e = err as { code?: string };
             if (e?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
@@ -142,12 +157,50 @@ export const actions = {
         redirect(303, `/accounts/${accountId}`);
     },
 
-    toggle_round_up: async ({ request, params }) => {
+    create_group: async ({ request, params }) => {
         const accountId = parseInt(params.accountId, 10);
         const data = await request.formData();
-        const enabled = data.get('enabled') === '1';
-        const since = enabled ? new Date().toISOString().slice(0, 10) : null;
-        setAccountRoundUp(accountId, since);
+        const name = (data.get('name') as string)?.trim();
+        const parentRaw = data.get('parent_id') as string | null;
+        const parentId = parentRaw ? parseInt(parentRaw, 10) : null;
+        const tint = ((data.get('tint') as string) || 'budget').trim();
+
+        if (!name) return fail(400, { error: 'Group name is required' });
+
+        createGroup(accountId, name, parentId != null && !isNaN(parentId) ? parentId : null, tint);
+        redirect(303, `/accounts/${accountId}`);
+    },
+
+    rename_group: async ({ request, params }) => {
+        const accountId = parseInt(params.accountId, 10);
+        const data = await request.formData();
+        const groupId = parseInt(data.get('group_id') as string, 10);
+        const name = (data.get('name') as string)?.trim();
+        const tint = (data.get('tint') as string)?.trim();
+
+        if (isNaN(groupId)) return fail(400, { error: 'Invalid input' });
+        if (name) renameGroup(groupId, name);
+        if (tint) setGroupTint(groupId, tint);
+        redirect(303, `/accounts/${accountId}`);
+    },
+
+    delete_group: async ({ request, params }) => {
+        const accountId = parseInt(params.accountId, 10);
+        const data = await request.formData();
+        const groupId = parseInt(data.get('group_id') as string, 10);
+        if (isNaN(groupId)) return fail(400, { error: 'Invalid input' });
+        deleteGroup(groupId);
+        redirect(303, `/accounts/${accountId}`);
+    },
+
+    move_envelope: async ({ request, params }) => {
+        const accountId = parseInt(params.accountId, 10);
+        const data = await request.formData();
+        const envelopeId = parseInt(data.get('envelope_id') as string, 10);
+        const groupRaw = data.get('group_id') as string | null;
+        const groupId = groupRaw ? parseInt(groupRaw, 10) : null;
+        if (isNaN(envelopeId)) return fail(400, { error: 'Invalid input' });
+        moveEnvelopeToGroup(envelopeId, groupId != null && !isNaN(groupId) ? groupId : null);
         redirect(303, `/accounts/${accountId}`);
     },
 
@@ -187,5 +240,73 @@ export const actions = {
         }
 
         redirect(303, `/accounts/${accountId}?tx=${currentIndex}`);
+    },
+
+    rename_envelope: async ({ request, params }) => {
+        const accountId = parseInt(params.accountId, 10);
+        const data = await request.formData();
+        const envelopeId = parseInt(data.get('envelope_id') as string, 10);
+        const name = (data.get('name') as string)?.trim();
+
+        if (isNaN(envelopeId)) return fail(400, { error: 'Invalid input' });
+        if (!name) return fail(400, { error: 'Envelope name is required' });
+
+        renameEnvelope(envelopeId, name);
+        redirect(303, `/accounts/${accountId}`);
+    },
+
+    delete_envelope: async ({ request, params }) => {
+        const accountId = parseInt(params.accountId, 10);
+        const data = await request.formData();
+        const envelopeId = parseInt(data.get('envelope_id') as string, 10);
+
+        if (isNaN(envelopeId)) return fail(400, { error: 'Invalid input' });
+
+        try {
+            deleteEnvelope(envelopeId);
+        } catch (err) {
+            if (err instanceof EnvelopeHasAllocationsError) return fail(409, { error: err.message });
+            throw err;
+        }
+
+        redirect(303, `/accounts/${accountId}`);
+    },
+
+    set_goal: async ({ request, params }) => {
+        const accountId = parseInt(params.accountId, 10);
+        const data = await request.formData();
+        const envelopeId = parseInt(data.get('envelope_id') as string, 10);
+        const goalType = data.get('goal_type') as string;
+        const amount = (data.get('amount') as string)?.trim();
+
+        if (isNaN(envelopeId)) return fail(400, { error: 'Invalid input' });
+
+        if (goalType === 'none') {
+            removeGoal(envelopeId);
+            redirect(303, `/accounts/${accountId}`);
+        }
+
+        const parsedAmount = parseFloat(amount);
+        if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) {
+            return fail(400, { error: 'A valid target amount is required' });
+        }
+        const normalizedAmount = parsedAmount.toFixed(2);
+
+        if (goalType === 'recurring') {
+            const rrule = (data.get('rrule') as string)?.trim() || null;
+            const dtstart = (data.get('dtstart') as string)?.trim() || null;
+            if (!rrule || !dtstart) return fail(400, { error: 'Recurrence rule and start date are required' });
+            setGoal(envelopeId, { amount: normalizedAmount, rrule, dtstart, dueDate: null });
+        } else if (goalType === 'one_off') {
+            const dueDate = (data.get('due_date') as string)?.trim() || null;
+            if (!dueDate) return fail(400, { error: 'A due date is required' });
+            setGoal(envelopeId, { amount: normalizedAmount, rrule: null, dtstart: null, dueDate });
+        } else if (goalType === 'open_ended') {
+            setGoal(envelopeId, { amount: normalizedAmount, rrule: null, dtstart: null, dueDate: null });
+        } else {
+            return fail(400, { error: 'Invalid goal type' });
+        }
+
+        redirect(303, `/accounts/${accountId}`);
     }
 };

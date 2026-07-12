@@ -36,11 +36,15 @@ test.describe('Global nav — desktop', () => {
 });
 
 test.describe('Global nav — mobile', () => {
-  test('shows hamburger button, hides inline links', async ({ page }) => {
+  // The Earmark header is a fixed 440px mobile frame with inline nav — there is
+  // no hamburger; the two short links always show.
+  test('shows inline nav links on mobile (no hamburger)', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('/accounts');
-    await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Global' })).toBeHidden();
+    const nav = page.getByRole('navigation', { name: 'Global' });
+    await expect(nav).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Accounts' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open menu' })).toHaveCount(0);
   });
 
   test('shows EARMARK wordmark on mobile', async ({ page }) => {
@@ -49,32 +53,6 @@ test.describe('Global nav — mobile', () => {
     const wordmark = page.getByRole('link', { name: 'EARMARK' });
     await expect(wordmark).toBeVisible();
     await expect(wordmark).toHaveAttribute('href', '/accounts');
-  });
-
-  test('hamburger expands a column of nav links', async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto('/accounts');
-    await page.getByRole('button', { name: 'Open menu' }).click();
-    await expect(page.getByRole('navigation', { name: 'Global mobile' })).toBeVisible();
-    const accountsLink = page.getByRole('navigation', { name: 'Global mobile' }).getByRole('link', { name: 'Accounts' });
-    await expect(accountsLink).toBeVisible();
-    await expect(accountsLink).toHaveAttribute('aria-current', 'page');
-  });
-
-  test('hamburger icon changes to close icon when open', async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto('/accounts');
-    await page.getByRole('button', { name: 'Open menu' }).click();
-    await expect(page.getByRole('button', { name: 'Close menu' })).toBeVisible();
-  });
-
-  test('menu closes after navigating to an account', async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto('/accounts');
-    await page.getByRole('button', { name: 'Open menu' }).click();
-    await page.getByTestId('account-card').first().click();
-    await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Global mobile' })).toBeHidden();
   });
 });
 
@@ -92,46 +70,5 @@ test.describe('Account tab bar', () => {
     await page.goto('/accounts');
     await page.getByTestId('account-card').first().click();
     await expect(page.getByTestId('tab-envelopes')).toHaveAttribute('aria-current', 'page');
-  });
-
-  test('Envelopes tab is active on envelope detail page', async ({ page }) => {
-    await page.goto('/accounts');
-    await page.getByTestId('account-card').first().click();
-    await page.getByTestId('envelope-card').first().click();
-    await expect(page.getByTestId('tab-envelopes')).toHaveAttribute('aria-current', 'page');
-  });
-});
-
-// ─── Breadcrumb ───────────────────────────────────────────────────────────────
-
-test.describe('Envelope breadcrumb', () => {
-  test('breadcrumb is not shown on account page', async ({ page }) => {
-    await page.goto('/accounts');
-    await page.getByTestId('account-card').first().click();
-    await expect(page.getByTestId('breadcrumb')).toBeHidden();
-  });
-
-  test('breadcrumb appears on envelope detail', async ({ page }) => {
-    await page.goto('/accounts');
-    await page.getByTestId('account-card').first().click();
-    await page.getByTestId('envelope-card').first().click();
-    await expect(page.getByTestId('breadcrumb')).toBeVisible();
-  });
-
-  test('breadcrumb shows envelope name', async ({ page }) => {
-    await page.goto('/accounts');
-    await page.getByTestId('account-card').first().click();
-    await page.getByTestId('envelope-card').first().click();
-    await expect(page.getByTestId('breadcrumb')).toContainText('Groceries');
-  });
-
-  test('breadcrumb Envelopes link navigates back to account', async ({ page }) => {
-    await page.goto('/accounts');
-    await page.getByTestId('account-card').first().click();
-    await page.waitForURL(/\/accounts\/\d+$/);
-    const accountUrl = page.url();
-    await page.getByTestId('envelope-card').first().click();
-    await page.getByTestId('breadcrumb').getByRole('link', { name: 'Envelopes' }).click();
-    await expect(page).toHaveURL(accountUrl);
   });
 });

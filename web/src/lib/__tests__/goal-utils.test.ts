@@ -18,6 +18,7 @@ function makeEnvelope(overrides: Partial<EnvelopeWithStats> = {}): EnvelopeWithS
         name: 'Test',
         sort_order: 0,
         created_at: '2026-01-01',
+        group_id: null,
         goal_amount: null,
         goal_rrule: null,
         goal_dtstart: null,

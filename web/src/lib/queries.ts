@@ -7,6 +7,8 @@ import {
 	TransactionValidationError,
 	WithdrawalAlreadyAllocatedError,
 	type AccountWithStats,
+	type EnvelopeGroup,
+	type EnvelopeTreeNode,
 	type EnvelopeWithdrawal,
 	type EnvelopeWithStats,
 	type Split,
@@ -287,11 +289,12 @@ export function getGoalContribution(
 export function createEnvelope(
 	accountId: number,
 	name: string,
+	groupId: number | null = null,
 	db: Database.Database = getDb()
 ): number {
 	const result = db
-		.prepare(`INSERT INTO envelopes (account_id, name) VALUES (?, ?)`)
-		.run(accountId, name.trim());
+		.prepare(`INSERT INTO envelopes (account_id, name, group_id) VALUES (?, ?, ?)`)
+		.run(accountId, name.trim(), groupId);
 	return result.lastInsertRowid as number;
 }
 
@@ -330,6 +333,147 @@ export function deleteEnvelope(
 		.get(envelopeId);
 	if (hasAllocations) throw new EnvelopeHasAllocationsError(envelopeId);
 	db.prepare(`DELETE FROM envelopes WHERE id = ?`).run(envelopeId);
+}
+
+// ---------------------------------------------------------------------------
+// Envelope Groups
+// ---------------------------------------------------------------------------
+
+export function getEnvelopeGroups(
+	accountId: number,
+	db: Database.Database = getDb()
+): EnvelopeGroup[] {
+	return db
+		.prepare(
+			`SELECT * FROM envelope_groups WHERE account_id = ? ORDER BY sort_order, name`
+		)
+		.all(accountId) as EnvelopeGroup[];
+}
+
+/**
+ * Build the account's envelope tree: nested groups with their child groups and
+ * envelopes. Ungrouped envelopes (and groups whose parent is missing) sit at the
+ * top level. Within a parent, child groups are listed before leaf envelopes,
+ * each already ordered by sort_order then name.
+ */
+export function buildEnvelopeTree(
+	accountId: number,
+	db: Database.Database = getDb()
+): EnvelopeTreeNode[] {
+	const groups = getEnvelopeGroups(accountId, db);
+	const envelopes = getEnvelopes(accountId, db);
+
+	const groupNodes = new Map<
+		number,
+		Extract<EnvelopeTreeNode, { kind: 'group' }>
+	>();
+	for (const group of groups) {
+		groupNodes.set(group.id, { kind: 'group', group, children: [] });
+	}
+
+	const roots: EnvelopeTreeNode[] = [];
+
+	for (const group of groups) {
+		const node = groupNodes.get(group.id)!;
+		const parent = group.parent_id != null ? groupNodes.get(group.parent_id) : undefined;
+		if (parent) parent.children.push(node);
+		else roots.push(node);
+	}
+
+	for (const envelope of envelopes) {
+		const node: EnvelopeTreeNode = { kind: 'envelope', envelope };
+		const parent = envelope.group_id != null ? groupNodes.get(envelope.group_id) : undefined;
+		if (parent) parent.children.push(node);
+		else roots.push(node);
+	}
+
+	return roots;
+}
+
+export function createGroup(
+	accountId: number,
+	name: string,
+	parentId: number | null = null,
+	tint = 'budget',
+	db: Database.Database = getDb()
+): number {
+	const maxOrder = db
+		.prepare(
+			`SELECT COALESCE(MAX(sort_order), -1) AS m FROM envelope_groups
+			 WHERE account_id = ? AND parent_id IS ?`
+		)
+		.get(accountId, parentId) as { m: number };
+
+	const result = db
+		.prepare(
+			`INSERT INTO envelope_groups (account_id, parent_id, name, tint, sort_order)
+			 VALUES (?, ?, ?, ?, ?)`
+		)
+		.run(accountId, parentId, name.trim(), tint, maxOrder.m + 1);
+	return result.lastInsertRowid as number;
+}
+
+export function renameGroup(
+	groupId: number,
+	name: string,
+	db: Database.Database = getDb()
+): void {
+	db.prepare(`UPDATE envelope_groups SET name = ? WHERE id = ?`).run(name.trim(), groupId);
+}
+
+export function setGroupTint(
+	groupId: number,
+	tint: string,
+	db: Database.Database = getDb()
+): void {
+	db.prepare(`UPDATE envelope_groups SET tint = ? WHERE id = ?`).run(tint, groupId);
+}
+
+/**
+ * Delete a group. Child groups cascade-delete; envelopes fall back to the top
+ * level (group_id SET NULL) — no envelope is ever destroyed by removing a group.
+ */
+export function deleteGroup(groupId: number, db: Database.Database = getDb()): void {
+	db.prepare(`DELETE FROM envelope_groups WHERE id = ?`).run(groupId);
+}
+
+export function moveEnvelopeToGroup(
+	envelopeId: number,
+	groupId: number | null,
+	db: Database.Database = getDb()
+): void {
+	db.prepare(`UPDATE envelopes SET group_id = ? WHERE id = ?`).run(groupId, envelopeId);
+}
+
+/**
+ * Re-parent a group. Guards against cycles (a group cannot become a descendant
+ * of itself) which would otherwise orphan a whole subtree.
+ */
+export function moveGroup(
+	groupId: number,
+	parentId: number | null,
+	db: Database.Database = getDb()
+): void {
+	if (parentId !== null) {
+		if (parentId === groupId) {
+			throw new SplitValidationError('A group cannot be its own parent');
+		}
+		// Walk up from the intended parent; if we reach groupId it's a cycle.
+		let cursor: number | null = parentId;
+		const seen = new Set<number>();
+		while (cursor !== null) {
+			if (cursor === groupId) {
+				throw new SplitValidationError('Cannot move a group inside one of its own descendants');
+			}
+			if (seen.has(cursor)) break;
+			seen.add(cursor);
+			const row = db
+				.prepare(`SELECT parent_id FROM envelope_groups WHERE id = ?`)
+				.get(cursor) as { parent_id: number | null } | undefined;
+			cursor = row?.parent_id ?? null;
+		}
+	}
+	db.prepare(`UPDATE envelope_groups SET parent_id = ? WHERE id = ?`).run(parentId, groupId);
 }
 
 // ---------------------------------------------------------------------------

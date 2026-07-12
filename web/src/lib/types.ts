@@ -33,6 +33,8 @@ export interface Envelope {
 	name: string;
 	sort_order: number;
 	created_at: string;
+	// Optional parent group — null means the envelope sits at the account's top level
+	group_id: number | null;
 	// Goal columns — null means no goal is set
 	goal_amount:     string | null;
 	goal_rrule:      string | null;
@@ -48,6 +50,23 @@ export interface EnvelopeWithStats extends Envelope {
 	// Net balance used for goal progress (CRDT allocations add, DBIT subtract)
 	goal_balance:     number;
 }
+
+export type GroupTint = 'budget' | 'monthly' | 'savings' | 'fun';
+
+export interface EnvelopeGroup {
+	id: number;
+	account_id: number;
+	parent_id: number | null;
+	name: string;
+	tint: string;
+	sort_order: number;
+	created_at: string;
+}
+
+/** A node in the account's envelope tree: either a (recursively nested) group or a leaf envelope. */
+export type EnvelopeTreeNode =
+	| { kind: 'group'; group: EnvelopeGroup; children: EnvelopeTreeNode[] }
+	| { kind: 'envelope'; envelope: EnvelopeWithStats };
 
 export interface Split {
 	id: number;
