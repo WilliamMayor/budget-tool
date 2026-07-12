@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from sync.db import get_all_accounts, get_transactions_for_account, insert_transaction
 from sync.models import Transaction, TransactionStatus
-from sync.sync import sync_account
+from sync.sync import _prev_month, sync_account
 from tests.conftest import make_transaction
 
 # Anchor fixtures to recent dates so the strict backward walk reaches them.
@@ -283,7 +283,7 @@ def test_incremental_sync_does_not_add_opening_balance(db_conn, saved_account):
     client.get_balance.assert_not_called()
 
 
-def test_incremental_sync_fetches_from_last_synced_day_inclusive(db_conn, saved_account):
+def test_incremental_sync_looks_back_to_start_of_previous_month(db_conn, saved_account):
     insert_transaction(
         db_conn, make_transaction(saved_account.id, lunchflow_id="old", date=RECENT)
     )
@@ -292,4 +292,24 @@ def test_incremental_sync_fetches_from_last_synced_day_inclusive(db_conn, saved_
     sync_account(db_conn, client, saved_account)
 
     first_call = client.get_transactions.call_args_list[0]
-    assert first_call.kwargs["date_from"] == RECENT
+    prev_year, prev_month = _prev_month(RECENT.year, RECENT.month)
+    assert first_call.kwargs["date_from"] == date(prev_year, prev_month, 1)
+
+
+def test_incremental_sync_refetches_backdated_prior_month_transaction(db_conn, saved_account):
+    # High-water mark is RECENT; a transaction dated in the previous month posts
+    # late. The look-back window must still reach and upsert it.
+    insert_transaction(
+        db_conn, make_transaction(saved_account.id, lunchflow_id="hw", date=RECENT)
+    )
+    prev_year, prev_month = _prev_month(RECENT.year, RECENT.month)
+    backdated = _make_api_tx(
+        saved_account.id, date(prev_year, prev_month, 15),
+        lunchflow_id="backdated", status=TransactionStatus.BOOKED,
+    )
+    client = _make_client([backdated], balance=Decimal("0.00"))
+
+    sync_account(db_conn, client, saved_account)
+
+    txns = get_transactions_for_account(db_conn, saved_account.id)
+    assert any(t.lunchflow_id == "backdated" for t in txns)

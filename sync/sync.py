@@ -141,8 +141,12 @@ def sync_account(conn: sqlite3.Connection, client: object, account: Account) -> 
         current_balance: Decimal = client.get_balance(account.lunchflow_id)  # type: ignore[attr-defined]
         _maybe_insert_opening_balance(conn, account, api_transactions, current_balance)
     else:
-        # Incremental: only what's posted since the last synced day (inclusive).
-        api_transactions = _fetch_incremental(client, account.lunchflow_id, since, today)
+        # Incremental: re-fetch from the start of the month before the last
+        # synced day, so backdated posts and late pending->booked transitions
+        # in recent history are still picked up (upsert dedupes the overlap).
+        prev_year, prev_month = _prev_month(since.year, since.month)
+        look_back_start = date(prev_year, prev_month, 1)
+        api_transactions = _fetch_incremental(client, account.lunchflow_id, look_back_start, today)
 
     for tx in api_transactions:
         tx.account_id = account.id  # type: ignore[assignment]
